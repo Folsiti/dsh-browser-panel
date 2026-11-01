@@ -1,4 +1,6 @@
 {
-  "title": "Browser Window",
-  "description": "Opens a Chromium browser window that is clearly marked as the AI's, and lets the model operate it: navigate, read, click, type, press, screenshot, eval."
+  "meta": {
+    "title": "Browser Window",
+    "description": "Opens a Chromium browser window that is clearly marked as the AI's, and lets the model operate it: navigate, read, click, type, press, screenshot, eval."
+  }
 }

@@ -1,5 +1,5 @@
 /**
- * @local/dsh-sidebar-browser - Host half.
+ * @folsiti/dsh-browser-panel - Host half.
  *
  * This plugin gives the model one real Chromium browser **window** and drives it
  * over the Chrome DevTools Protocol. It no longer touches DSH's right-Sidebar
@@ -32,7 +32,7 @@
  * the address back after that reveal, and the `UnknownVizError` workarounds. CDP
  * reads and captures a page whether or not the window is on screen.
  *
- * @module @local/dsh-sidebar-browser
+ * @module @folsiti/dsh-browser-panel
  */
 import { spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, readdirSync, statSync, createWriteStream } from 'node:fs'
@@ -46,7 +46,7 @@ import { inflateRawSync } from 'node:zlib'
 /** Reported by `browser_panel_status` and by the README's version line. */
 const VERSION = '0.21.0'
 /** Package name, echoed in tool output so a stale install is recognizable. */
-const PLUGIN = '@local/dsh-sidebar-browser'
+const PLUGIN = '@folsiti/dsh-browser-panel'
 /** Screenshot directory used when the caller does not name a path. */
 const SHOT_DIR = '.dsh-browser-panel'
 /** Upper bound on outline entries, so one huge page cannot flood the context. */

@@ -6,7 +6,7 @@
 # half any more: the plugin no longer touches the right-Sidebar Browser tab.
 - insert:
     - id: sidebar-browser
-      name: '@local/dsh-sidebar-browser'
+      name: '@folsiti/dsh-browser-panel'
       config:
         # Budget for one DevTools command, and for waiting on a page load.
         actionTimeoutMs: 20000

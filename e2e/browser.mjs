@@ -301,7 +301,7 @@ try {
   await step('the badge never leaks into what the model reads', async () => {
     const page = await call('browser_panel_snapshot')
     assert.match(page.text, /strict csp body/)
-    assert.doesNotMatch(page.text, /AI 浏览器|dsh-sidebar-browser|空闲/)
+    assert.doesNotMatch(page.text, /AI 浏览器|dsh-browser-panel|空闲/)
     assert.ok(page.outline.every((item) => !item.ref.includes('dsh-ai')), 'the badge must not appear in the outline')
   })
 

@@ -1,11 +1,32 @@
 {
-  "name": "@local/dsh-sidebar-browser",
+  "name": "@folsiti/dsh-browser-panel",
   "version": "0.21.0",
-  "private": true,
   "type": "module",
   "description": "DeepSeek Harness plugin: a real Chromium browser window, marked as the AI's, that the model drives over the DevTools Protocol — one page per agent, owner labels on every page, and a browser download when the machine has none.",
   "license": "MIT",
   "icon": "./icon.svg",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Folsiti/dsh-browser-panel.git"
+  },
+  "homepage": "https://github.com/Folsiti/dsh-browser-panel#readme",
+  "bugs": {
+    "url": "https://github.com/Folsiti/dsh-browser-panel/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "plugin",
+    "browser",
+    "chrome-devtools-protocol",
+    "cdp",
+    "screenshot",
+    "agent-tools"
+  ],
   "scripts": {
     "test": "node --test",
     "test:e2e": "node e2e/browser.mjs"
@@ -13,6 +34,7 @@
   "exports": {
     ".": "./host.js",
     "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [

@@ -15,19 +15,20 @@ DeepSeek Harness 插件：**弹出一个真正的浏览器窗口，明确标注�
 
 ## 安装
 
-插件只有几个文件、零依赖（不需要 `npm install`，也不需要 puppeteer / playwright）。把它放进 DSH 的插件目录，然后重启 DSH：
+DSH 的插件由 profile 管理（装进 `~/.dsh/profiles/<profile>/` 并登记到 `dsh.profile.bundles`），所以走 DSH 自己的插件页安装：
 
-```powershell
-# Windows
-git clone https://github.com/Folsiti/dsh-browser-panel.git "$env:USERPROFILE\.dsh\profiles\desktop\plugins\dsh-sidebar-browser"
-```
+1. 侧栏**插件** → **添加插件**（或箭头菜单里的**安装第三方插件**）；
+2. 输入包名 `@folsiti/dsh-browser-panel`，可带版本（如 `@folsiti/dsh-browser-panel@0.21.0`）；
+3. 选**安装源**（npm 官方源 / 中国大陆镜像源），点**安装**；
+4. 装完即生效（profile 开了 HMR 时不用重启；没开则重启 DSH）。
 
-```bash
-# macOS / Linux
-git clone https://github.com/Folsiti/dsh-browser-panel.git ~/.dsh/profiles/desktop/plugins/dsh-sidebar-browser
-```
+不想走 npm（或者要装本地改动版）也可以，同一个「添加插件」对话框接受：
 
-目录名保持 `dsh-sidebar-browser`，因为 `cordis.patch.yml` 里那行配置按这个包名加载。更新就是进目录 `git pull`，再重启 DSH。
+- **Git 地址**：`https://github.com/Folsiti/dsh-browser-panel`
+- **本地绝对路径**：`D:\项目\dsh-browser-panel`（本地目录是 `link:` 安装，改完要重启 DSH 才生效）
+
+一次安装会做三件事：把包写进 profile 的 `package.json` 依赖、加进 `dsh.profile.bundles`、套用包里的 `cordis.patch.yml`。
+**只把文件拷进 `plugins/` 目录是不会生效的** —— 这是早期版本 README 写错的地方。
 
 ## 九个工具
 
@@ -299,8 +300,9 @@ agent 结束时**不关它的页面**：用户可能正要看效果，而且页�
 
 ## 安装位置
 
-`%USERPROFILE%\.dsh\profiles\desktop\plugins\dsh-sidebar-browser\`
-（`host.js`、`package.json`、`cordis.patch.yml`、`locale/*.json`、`icon.svg`、`README.md`）。
+npm 安装的在 `%USERPROFILE%\.dsh\profiles\desktop\node_modules\@folsiti\dsh-browser-panel\`；
+从本地目录安装的是一个 `link:` 依赖，指向你给的那个目录（早期版本曾放在 `plugins\dsh-sidebar-browser\`）。
+不管哪种，包里都是 `host.js`、`package.json`、`cordis.patch.yml`、`locale/*.json`、`icon.svg`、`README.md`。
 
 **v0.16.2 → v0.17.0 的变化：`client.js` 已删除，`package.json` 里的 `dsh.client` 元数据也已移除。**
 装了新版本后请把插件目录里遗留的 `client.js` 删掉。**v0.17.0 之后都只是 `host.js` /
@@ -387,9 +389,9 @@ Windows 上想亲眼确认「窗口真的在屏幕上、标题真的写着 AI �
 | Chrome for Testing | 官方索引可达，Stable `154.0.8037.57`，win64 包 `205808814` 字节（≈196 MiB），首字节 `PK\x03\x04` |
 | 系统窗口标题 | `Fixture Two 和另外 2 个页面 - AI 浏览器 - Microsoft Edge`；停在标记标签页时是 `🤖 AI 浏览器 · dsh-browser-panel 和另外 2 个页面 - AI 浏览器 - Microsoft Edge` |
 | 标记标签页 | `about:blank#dsh-ai-browser`，标题 `🤖 AI 浏览器 · dsh-browser-panel`，`agentBound: false` |
-| 角标 | `AI 浏览器 · 空闲 · 负责人 主会话 #agent1 @local/dsh-sidebar-browser`；一次工具调用期间读到 `AI 浏览器 · 正在执行脚本 · 负责人 主会话 #agent1` |
+| 角标 | `AI 浏览器 · 空闲 · 负责人 主会话 #agent1 @folsiti/dsh-browser-panel`；一次工具调用期间读到 `AI 浏览器 · 正在执行脚本 · 负责人 主会话 #agent1` |
 | 角标存活 | reload 之后仍在；`default-src 'none'; script-src 'none'; style-src 'none'` 的页面上也在 |
-| 不污染读取 | 快照既包含 fixture 正文 `strict csp body`，又不含 `AI 浏览器` / `dsh-sidebar-browser` / `空闲`，大纲里也没有 `dsh-ai` 节点 |
+| 不污染读取 | 快照既包含 fixture 正文 `strict csp body`，又不含 `AI 浏览器` / `dsh-browser-panel` / `空闲`，大纲里也没有 `dsh-ai` 节点 |
 | `open` | `Edg/154.0.4258.37`，新建标签页并加载 fixture，标题 `Fixture One` |
 | 可见窗口 | `Browser.getWindowForTarget` → `1100x720 at 10,10`，`windowState: normal` |
 | `snapshot` | 大纲给出 `#next`（`tag=a`、`href=…/second`、文本 `Go to second`）与 `#field` |

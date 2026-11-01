@@ -120,7 +120,7 @@ function valueViolations(schema, value, at, found) {
 /** The status value a running browser would produce. */
 function statusValue() {
   return {
-    plugin: '@local/dsh-sidebar-browser',
+    plugin: '@folsiti/dsh-browser-panel',
     version: VERSION,
     running: true,
     browser: 'Edg/154.0.4258.37',
