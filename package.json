@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-sidebar-browser",
-  "version": "0.20.1",
+  "version": "0.21.0",
   "private": true,
   "type": "module",
   "description": "DeepSeek Harness plugin: a real Chromium browser window, marked as the AI's, that the model drives over the DevTools Protocol — one page per agent, owner labels on every page, and a browser download when the machine has none.",

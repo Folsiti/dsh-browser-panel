@@ -304,6 +304,54 @@ test('a badge that cannot be painted never breaks the action', async () => {
   await assert.doesNotReject(controller.paint({ closed: true }, 'busy', 'x', 'y'))
 })
 
+test('a clean screenshot suspends the layer around the capture and restores it after', async () => {
+  // 1x1 PNG, so the controller can read its true size back.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+
+  /** @param config - row config. @returns the calls one screenshot makes. */
+  async function shoot(config) {
+    const calls = []
+    const client = {
+      closed: false,
+      async send(method, params) {
+        calls.push({ method, params })
+        if (method === 'Page.captureScreenshot') return { data: png.toString('base64') }
+        return {}
+      },
+    }
+    const controller = new BrowserWindowController({ ownership: 'always', ...config })
+    // `running` is a getter over the child process; an adopted browser is the
+    // one state a test can stand in for without spawning anything.
+    controller.adopted = true
+    controller.tabs.set('agent-1', { targetId: 'T1', client })
+    const shot = await controller.screenshot('agent-1')
+    assert.equal(shot.width, 1)
+    assert.equal(shot.height, 1)
+    return calls.map((entry) => {
+      if (entry.method !== 'Runtime.evaluate') return entry.method
+      const mode = /api\.(suspend|resume)\(\)/.exec(entry.params.expression)
+      return mode === null ? 'paint' : mode[1]
+    })
+  }
+
+  // clean: paint busy, hide the layer, capture, put it back, paint idle.
+  assert.deepEqual(await shoot({ screenshot: 'clean' }), [
+    'paint', 'suspend', 'Page.captureScreenshot', 'resume', 'paint',
+  ])
+  // marked: the layer is drawn into the PNG, exactly as it always was.
+  assert.deepEqual(await shoot({ screenshot: 'marked' }), [
+    'paint', 'Page.captureScreenshot', 'paint',
+  ])
+  // ownership off: there is no layer to hide, so nothing is sent to the page.
+  assert.deepEqual(await shoot({ screenshot: 'clean', ownership: 'off' }), ['Page.captureScreenshot'])
+})
+
+test('the screenshot mode defaults to clean and clamps a typo', () => {
+  assert.equal(normalizeConfig({}).screenshot, 'clean')
+  assert.equal(normalizeConfig({ screenshot: 'marked' }).screenshot, 'marked')
+  assert.equal(normalizeConfig({ screenshot: 'sometimes' }).screenshot, 'clean')
+})
+
 test('the ownership knobs survive normalizeConfig unchanged where they should', () => {
   assert.equal(normalizeConfig({ ownership: 'operating', markerTab: false, windowName: 'AI' }).markerTab, false)
   assert.equal(normalizeConfig({ ownership: 'operating' }).ownership, 'operating')

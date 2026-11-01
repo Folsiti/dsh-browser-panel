@@ -152,6 +152,7 @@ function statusValue() {
     reused: false,
     windowName: 'AI 浏览器',
     ownership: 'always',
+    screenshot: 'clean',
     limits: { actionTimeoutMs: 1234, maxSnapshotChars: 4321 },
     lastError: '',
   }
@@ -364,6 +365,7 @@ test('status describes the window rather than a bridge', async () => {
   assert.match(body, /window: 1000x700 at 120,120/)
   assert.match(body, /window name: AI 浏览器/)
   assert.match(body, /ownership badge: always \(in-page marker on every tab\)/)
+  assert.match(body, /screenshot: clean — the badge and amber frame are left out of the PNG/)
   assert.match(body, /marker tab: T0/)
   assert.match(body, /1\. \[AI marker\] 🤖 AI 浏览器 · dsh-browser-panel — about:blank#dsh-ai-browser/)
   assert.match(body, /2\. \[selected\] \[owner: lead\] Example — https:\/\/example\.test\//)
@@ -489,6 +491,7 @@ test('normalizeConfig clamps every knob and ignores the retired ones', () => {
     ownership: 'always',
     markerTab: true,
     provision: 'ask',
+    screenshot: 'clean',
   })
 
   // Only an explicit `true` runs windowless.
@@ -502,6 +505,14 @@ test('normalizeConfig clamps every knob and ignores the retired ones', () => {
   assert.equal(normalizeConfig({ ownership: false }).ownership, 'always')
   assert.equal(normalizeConfig({ markerTab: 'no' }).markerTab, true)
   assert.equal(normalizeConfig({ markerTab: false }).markerTab, false)
+
+  // Screenshots are clean by default; only the known modes are accepted, and a
+  // typo falls back to `clean` rather than to drawing the badge into the image.
+  assert.equal(normalizeConfig({ screenshot: 'marked' }).screenshot, 'marked')
+  assert.equal(normalizeConfig({ screenshot: 'clean' }).screenshot, 'clean')
+  assert.equal(normalizeConfig({ screenshot: 'Clean' }).screenshot, 'clean')
+  assert.equal(normalizeConfig({ screenshot: 'transparent' }).screenshot, 'clean')
+  assert.equal(normalizeConfig({ screenshot: false }).screenshot, 'clean')
   assert.equal(normalizeConfig({ windowName: '  ' }).windowName, 'AI 浏览器')
   assert.equal(normalizeConfig({ windowName: '  AI 的浏览器  ' }).windowName, 'AI 的浏览器')
 

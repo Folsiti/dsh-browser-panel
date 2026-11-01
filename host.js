@@ -44,7 +44,7 @@ import { pipeline } from 'node:stream/promises'
 import { inflateRawSync } from 'node:zlib'
 
 /** Reported by `browser_panel_status` and by the README's version line. */
-const VERSION = '0.20.1'
+const VERSION = '0.21.0'
 /** Package name, echoed in tool output so a stale install is recognizable. */
 const PLUGIN = '@local/dsh-sidebar-browser'
 /** Screenshot directory used when the caller does not name a path. */
@@ -82,6 +82,12 @@ const INTERACTIVE_SELECTOR = 'a[href], button, input, select, textarea, summary,
  * All of it is cosmetic and non-interactive: every node carries `data-dsh-ai`,
  * `pointer-events` is `none`, and the snapshot hides the layer before reading
  * page text so the model never sees its own badge in the page.
+ *
+ * `browser_panel_screenshot` treats the layer differently depending on
+ * `screenshot`: `clean` (the default) keeps the badge and frame on screen but
+ * suspends them for the instant of the capture, so the PNG is the page itself;
+ * `marked` draws them into the image, which is how a later look at a screenshot
+ * can still prove who was driving.
  */
 const MARKER_HASH = '#dsh-ai-browser'
 /** The marker tab's title, and the name its strip entry shows. */
@@ -138,10 +144,14 @@ const DEFAULTS = Object.freeze({
   ownership: 'always',
   markerTab: true,
   provision: 'ask',
+  screenshot: 'clean',
 })
 
 /** The ownership modes this plugin understands. */
 const OWNERSHIP_MODES = Object.freeze(['always', 'operating', 'off'])
+
+/** How `browser_panel_screenshot` treats the in-page ownership layer. */
+const SCREENSHOT_MODES = Object.freeze(['clean', 'marked'])
 
 /** What to do when the machine has no browser at all. */
 const PROVISION_MODES = Object.freeze(['ask', 'never', 'auto'])
@@ -648,6 +658,11 @@ function normalizeConfig(raw) {
     markerTab: config.markerTab !== false,
     // An unknown value falls back to asking, never to downloading silently.
     provision: PROVISION_MODES.includes(config.provision) ? config.provision : DEFAULTS.provision,
+    // `clean` hides the badge and the amber frame for the instant of the capture,
+    // so the PNG is the page rather than AI chrome; `marked` keeps the old
+    // behaviour of drawing the layer into the image. An unknown value falls back
+    // to `clean`, the quieter of the two.
+    screenshot: SCREENSHOT_MODES.includes(config.screenshot) ? config.screenshot : DEFAULTS.screenshot,
   }
 }
 
@@ -2509,6 +2524,68 @@ class BrowserWindowController {
   }
 
   /**
+   * Hide the ownership layer for the instant of a capture, and wait for the
+   * frame that no longer has it.
+   *
+   * The badge and the amber frame are ordinary DOM nodes, so the compositor
+   * would otherwise draw them into the PNG. Suspending hides them; a pair of
+   * animation frames then makes sure the capture reads a frame painted without
+   * them. A background tab may have its animation frames throttled, so the wait
+   * is bounded — the hide itself already happened synchronously, and a frame
+   * that is one paint early is still a frame of the page.
+   *
+   * @param client - the tab's client.
+   */
+  async suspendOwnershipForCapture(client) {
+    if (this.config.ownership === 'off' || client === undefined || client.closed) return
+    try {
+      await client.send('Runtime.evaluate', {
+        expression: `(async () => {
+  const api = window.__DSH_AI_OWNERSHIP__;
+  if (!api) return false;
+  api.suspend();
+  await new Promise((resolve) => {
+    const done = () => resolve();
+    if (typeof requestAnimationFrame !== 'function') return setTimeout(done, 50);
+    requestAnimationFrame(() => requestAnimationFrame(done));
+    setTimeout(done, 250);
+  });
+  return true;
+})()`,
+        returnByValue: true,
+        awaitPromise: true,
+      }, 2000)
+    } catch {
+      /* a capture must not fail because the badge would not hide in time */
+    }
+  }
+
+  /**
+   * Put the ownership layer back after a capture.
+   *
+   * Best effort on purpose: the next paint puts the badge back anyway, so a
+   * failed resume only shortens the blink, it does not lose the marker.
+   *
+   * @param client - the tab's client.
+   */
+  async resumeOwnershipAfterCapture(client) {
+    if (this.config.ownership === 'off' || client === undefined || client.closed) return
+    try {
+      await client.send('Runtime.evaluate', {
+        expression: `(function () {
+  const api = window.__DSH_AI_OWNERSHIP__;
+  if (!api) return false;
+  api.resume();
+  return true;
+})()`,
+        returnByValue: true,
+      }, 1500)
+    } catch {
+      /* the next paint puts the badge back anyway */
+    }
+  }
+
+  /**
    * Open the marker tab: the one page in this window that explains itself.
    *
    * Created once per browser process. If the user closes it, it stays closed —
@@ -3186,17 +3263,27 @@ class BrowserWindowController {
    * Unlike Electron's `capturePage`, CDP captures a page that is not being
    * composited on screen, so this works even while the window is behind others.
    *
+   * With `screenshot: clean` (the default) the ownership layer is suspended for
+   * the capture only: the user still sees the badge and the amber frame in the
+   * window, the PNG does not. `marked` keeps the layer in the image.
+   *
    * @param agentId - the session asking.
    * @returns the PNG bytes and their true pixel size.
    */
   async screenshot(agentId) {
     return await this.withOwnership(agentId, OPERATION_LABELS.screenshot, async (client) => {
-      const shot = await client.send('Page.captureScreenshot', { format: 'png' }, this.config.actionTimeoutMs)
-      const data = shot !== null && typeof shot === 'object' && typeof shot.data === 'string' ? shot.data : ''
-      if (data === '') throw new Error('the browser returned no PNG data')
-      const bytes = Buffer.from(data, 'base64')
-      const size = pngSize(bytes)
-      return { bytes, width: size.width, height: size.height }
+      const clean = this.config.screenshot === 'clean'
+      if (clean) await this.suspendOwnershipForCapture(client)
+      try {
+        const shot = await client.send('Page.captureScreenshot', { format: 'png' }, this.config.actionTimeoutMs)
+        const data = shot !== null && typeof shot === 'object' && typeof shot.data === 'string' ? shot.data : ''
+        if (data === '') throw new Error('the browser returned no PNG data')
+        const bytes = Buffer.from(data, 'base64')
+        const size = pngSize(bytes)
+        return { bytes, width: size.width, height: size.height }
+      } finally {
+        if (clean) await this.resumeOwnershipAfterCapture(client)
+      }
     })
   }
 
@@ -3246,6 +3333,7 @@ class BrowserWindowController {
       reused: this.adopted,
       windowName: this.config.windowName,
       ownership: this.config.ownership,
+      screenshot: this.config.screenshot,
       limits: { actionTimeoutMs: this.config.actionTimeoutMs, maxSnapshotChars: this.config.maxSnapshotChars },
       lastError: this.lastError,
     }
@@ -3460,6 +3548,7 @@ function renderStatus(value) {
     ['no sandbox', value.noSandbox ? 'yes — running as root, the renderer sandbox is off' : ''],
     ['window', value.window.width === 0 ? '' : `${value.window.width}x${value.window.height} at ${value.window.left},${value.window.top}`],
     ['ownership badge', value.ownership === 'off' ? 'off' : `${value.ownership} (in-page marker on every tab)`],
+    ['screenshot', value.screenshot === 'marked' ? 'marked — the badge and amber frame are drawn into the PNG' : 'clean — the badge and amber frame are left out of the PNG'],
     ['marker tab', value.marker === '' ? 'none' : value.marker],
     ['reused', value.reused ? 'yes — attached to a browser that was already running for this profile' : ''],
     ['limits', JSON.stringify(value.limits)],
@@ -3637,6 +3726,7 @@ const OUTPUTS = {
       reused: { type: 'boolean', description: 'True when this controller attached to a browser that was already running for this profile.' },
       windowName: { type: 'string', description: 'The name this browser profile carries, which the OS window title shows.' },
       ownership: { type: 'string', description: "'always', 'operating', or 'off'." },
+      screenshot: { type: 'string', description: "'clean' (badge and frame left out of the PNG) or 'marked' (drawn into it)." },
       limits: {
         type: 'object',
         additionalProperties: false,
@@ -3652,7 +3742,7 @@ const OUTPUTS = {
       'plugin', 'version', 'running', 'browser', 'browserPath', 'pid', 'debugPort', 'profileDir',
       'headless', 'headlessReason', 'noSandbox', 'visible', 'browserAvailable', 'browserSource',
       'browserFound', 'browserRemedy', 'provision', 'provisionDetail', 'window', 'pages', 'selected',
-      'marker', 'reused', 'windowName', 'ownership', 'limits', 'lastError',
+      'marker', 'reused', 'windowName', 'ownership', 'screenshot', 'limits', 'lastError',
     ],
   }, (_args, value) => text(renderStatus(value))),
 

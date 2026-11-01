@@ -11,6 +11,7 @@ DeepSeek Harness 插件：**弹出一个真正的浏览器窗口，明确标注�
 **v0.19.2 起不再把「启动器退出」当成失败**，见「浏览器进程的生命周期」。
 **v0.20.0 起每个 agent 最多只有一张页面**，页面角标写明负责人，agent 结束后页面保留、后来者可以接手，见「一个 agent 一张页面」。
 **v0.20.1 修掉真机首测发现的两个可用性问题**：系统提示词里那条规则之前没真正注入；`browser_panel_status` 现在每页都打印 `(id: …)`，模型能直接拿它 `adopt`。
+**v0.21.0 起截图默认是干净的**：角标和琥珀边框照常显示在窗口里，但 `browser_panel_screenshot` 截出的 PNG 里没有它们（`screenshot: marked` 可换回旧行为），见「截图模式」。
 
 ## 安装
 
@@ -40,7 +41,7 @@ git clone https://github.com/Folsiti/dsh-browser-panel.git ~/.dsh/profiles/deskt
 | `browser_panel_press` | 发送真实按键（Enter / Tab / Escape / 方向键 / PageUp / PageDown / Home / End / Backspace / Delete / Space / 单字符） |
 | `browser_panel_navigate` | `back` / `forward` / `reload` |
 | `browser_panel_eval` | 在主框架执行一段 JS（async 函数体），返回 JSON 值 |
-| `browser_panel_screenshot` | CDP 截图成 PNG 写盘，返回路径与真实像素尺寸 |
+| `browser_panel_screenshot` | CDP 截图成 PNG 写盘，返回路径与真实像素尺寸。默认 `screenshot: clean`：角标与琥珀边框留在窗口里，但不进图 |
 
 工具返回的都是**结构化 JSON**（PTC 模式下模型看到的是生成 SDK，返回文本会被丢掉），
 所以每个工具都声明了 object 根、且 `required` 与 `properties` 完全一致。
@@ -192,7 +193,7 @@ confinement 里，需要额外照顾 profile 位置才不崩。`browser_panel_st
   用户眼前，而 CDP 合成的输入本来也不走操作系统的输入队列。
 - **不污染模型看到的内容。** 角标虽然画在页面 DOM 里，但 `browser_panel_snapshot` 读取前会先把它
   `display:none` 再读 `innerText`，元素大纲里也会跳过带 `data-dsh-ai` 的节点。模型读到的页面文本
-  不含插件自己画的东西。（截图例外：截图里带着角标，这样事后回看截图也能看出当时是 AI 在操作。）
+  不含插件自己画的东西。（截图默认也干净：`screenshot: clean` 会为按快门的那一瞬间藏起角标与边框；想在图里留下「这是 AI 在操作」的证据就把模式设成 `marked`。）
 - **用户关掉标记标签页就不重建。** 跟人抢标签页比少一个提示更糟；窗口标题那层标识还在。
 - **角标跑在页面主世界**，这是为了让宿主可以直接推状态。它是「告知」而不是「防篡改」：一个铁了心要
   隐藏它的页面能把它删掉，但删不掉窗口标题和标记标签页。
@@ -203,6 +204,24 @@ confinement 里，需要额外照顾 profile 位置才不崩。`browser_panel_st
   它就只在 AI 动手时出现。
 - **`windowName` 只在首次启动前生效**：profile 已经有了别人起的名字（你自己改的）就绝不覆盖；
   已经是 Chromium 自动生成的「用户配置 N」则会被替换。
+
+## 截图模式
+
+身份层是画在页面里的真实 DOM（右下角角标、操作时四周的琥珀边框），而截图是模型看页面的主要方式。
+两边需要一个折中，所以 `screenshot` 有两个模式：
+
+| 模式 | 窗口里 | PNG 里 | 适用 |
+|---|---|---|---|
+| `clean`（默认） | 角标与边框照常显示 | **没有**，图就是页面本身 | 给模型看页面、留档页面内容 |
+| `marked` | 角标与边框照常显示 | 带着，角标上写着「正在截图」 | 需要一张图证明「当时是 AI 在驱动」 |
+
+`clean` 不是关掉身份层：它只是在**按快门的那一瞬间**把身份层 `suspend()`，等一帧、截图、再 `resume()`。
+窗口里该显示的一直在（除了约 0.1–0.3 秒的一眨眼，那是「截一张没有标识的图」本身要付的代价）。
+`ownership: 'off'` 时没有层可藏，两个模式出图一样。
+
+实测（纯白 fixture 页，headless 与 visible 都跑过）：`clean` 的四角是 `rgb(255,255,255)`、右下 460×90 区域最暗像素 luma **255**；
+同一页切到 `marked`，四角变成 `rgb(252,204,80)`（`rgba(251,191,36,.8)` 压在白色上）、右下最暗 luma **79.6**（角标），
+截图返回后角标仍在屏幕上。像素是这里唯一可信的证据 —— 读 DOM 只能证明「样式改了」，证明不了「图里真的没有」。
 
 ## 一个 agent 一张页面
 
@@ -272,6 +291,7 @@ agent 结束时**不关它的页面**：用户可能正要看效果，而且页�
 | `allowOrigins` | `''` | `browser_panel_open` 的白名单：逗号分隔的域名后缀；空 = 任意 http(s)。**只约束 agent 的入口，不是防火墙** |
 | `windowName` | `AI 浏览器` | 写进 profile 的名字，也就是 OS 窗口标题里那一段 |
 | `ownership` | `always` | 页面上的身份层：`always`（常驻角标）/ `operating`（只在操作时出现）/ `off`（完全不要，连标记标签页也不建）。填了没见过的值会回落到 `always`，打错不会把标识藏起来 |
+| `screenshot` | `clean` | `browser_panel_screenshot` 出图带不带身份层：`clean`（角标与琥珀边框留在窗口里、不进图）/ `marked`（画进图里，事后回看截图仍能看出是 AI 在操作）。填了没见过的值会回落到 `clean` |
 | `markerTab` | true | 是否创建最左侧那张说明卡标签页。只有显式 `false` 才关 |
 | `provision` | `ask` | 机器上没有浏览器时怎么办：`ask`（加载时检测，第一次 `open` 时在界面里问是否下载）/ `never`（从不问也从不下载）/ `auto`（不问直接下载）。填了没见过的值会回落到 `ask`，**绝不会静默下载** |
 
@@ -289,8 +309,8 @@ agent 结束时**不关它的页面**：用户可能正要看效果，而且页�
 ## 自测
 
 ```
-npm test          # 95 个用例，不需要浏览器
-npm run test:e2e  # 32 项真机检查，会真的拉起 Edge
+npm test          # 97 个用例，不需要浏览器
+npm run test:e2e  # 34 项真机检查，会真的拉起 Edge
 npm run test:e2e -- --visible          # 用真窗口跑（会短暂弹窗）
 npm run test:e2e -- --visible --hold 8000   # 弹窗后停留 8 秒给你看
 npm run test:e2e -- --visible --hold 8000 --marker-front   # 停在标记标签页上
@@ -311,14 +331,16 @@ Windows 上想亲眼确认「窗口真的在屏幕上、标题真的写着 AI �
   退订生效、`waitForEvent` 到点安静返回 null 且不留监听器、close/socket 掉线让所有在飞的命令失败、`connect` 成功与拒绝。
 - `test/host-helpers.test.mjs`（10 条）—— 地址规则（裸域名补 HTTPS、拒绝 file:/javascript:/data:/内嵌凭据、allowOrigins 按域名边界匹配）、
   按键映射、PNG 尺寸、浏览器探测（win32/darwin/linux 候选与配置/环境变量优先级）、四个页面端表达式能编译且输入以 JSON 注入。
-- `test/ownership.test.mjs`（21 条）—— 身份层：注入脚本能编译、幂等、每个节点都带 `data-dsh-ai`、
+- `test/ownership.test.mjs`（23 条）—— 身份层：注入脚本能编译、幂等、每个节点都带 `data-dsh-ai`、
   不碰 `pointer-events`、不含 `<style>`／`style=`／`innerHTML`（CSP 安全）、角标与标记卡两条路径都在；
   `ownershipExpression` 把状态与标签当 JSON 注入；`sessionTag` 取 id 尾部；
   `agentLabel` 的名字优先与「主会话／子 agent L<n> + 短 id」兜底；
   系统提示词里的「一个 agent 一张页面」规则包含 `adopt`；
   快照表达式会 suspend/resume 并跳过身份层节点；`seedProfileName` 的五种情形（新 profile 写入、
   替换 Chromium 自动生成的名字、绝不覆盖用户起的名字、无法解析的 `Local State` 不碰、已经对了就不重写）；
-  `ownership: 'off'` 一个字节都不注入；推状态失败（比如页面正弹着 dialog）也绝不弄挂动作。
+  `ownership: 'off'` 一个字节都不注入；推状态失败（比如页面正弹着 dialog）也绝不弄挂动作；
+  `clean` 截图的调用顺序（paint busy → suspend → 截图 → resume → paint idle）、`marked` 不 suspend、
+  `ownership: 'off'` 时截图一个字节都不发给页面。
 - `test/provisioning.test.mjs`（40 条）—— 「这台机器不是我这台」的四种情况：
   **发现**（五层各自能找到、裸命令名走 PATH、配错的 `browserPath` 被如实报出、原生安装压过 snap、
   PATH 只按具体名字找——`launcher.exe` 曾把 JetBrains 工具链当成浏览器、缓存根包含插件自己的下载目录）；
@@ -332,13 +354,15 @@ Windows 上想亲眼确认「窗口真的在屏幕上、标题真的写着 AI �
   `../` 与绝对路径被拒绝、非 zip 文件、zip64 被明确拒绝、CRC-32 对已知值）；
   **已在运行的浏览器**（只相信有应答的端口、启动器退出 0 不再算失败、非 0 立刻失败、
   转交但没人应答报 `handoff`、接管的浏览器 `running`/`reused` 正确、接管后退出不会去 kill 别人的进程且可以重复 dispose）。
-- `e2e/browser.mjs`（32 项）—— 真机全链路：本地 fixture 站点，先起浏览器再依次调用九个工具，
+- `e2e/browser.mjs`（34 项）—— 真机全链路：本地 fixture 站点，先起浏览器再依次调用九个工具，
   覆盖「status 不启动浏览器」「窗口以 OS 会显示的方式自报身份」「标记标签页存在且不属于任何会话」
   「每个页面都有角标且换文档后还在」「CSP 为 `default-src 'none'` 的页面照样有角标」
   「标记卡渲染并跟随状态」「角标不泄漏进模型读到的页面文本」
   「快照 ref 可点击」「maxChars 上限与下限」「eval 的 async 与 await」
   「真实键盘输入与 clear」「拒绝不可输入元素」「按键与未知按键拒绝」「按文字点击并读回新 URL」
   「点击落空如实上报」「历史后退与刷新」「截图是真实 PNG 且尺寸取自文件头」
+  **「clean 截图的四角与右下角没有角标与琥珀边框（逐像素解码 PNG 验证），截图后角标仍在屏幕上」
+  「marked 截图里两者都在」**
   「status 报告运行中窗口与绑定标签页」「第二个会话拿到自己的标签页且互不串台」
   **「同一个 agent 的第二次 open 只导航、绝不新增标签」「负责人仍在运行时的页面拒绝被接手」
   「负责人结束后可以用 adopt 接手，页面数不增加、被释放的页面仍在但不再属于任何人、角标换成新负责人」**
@@ -351,7 +375,7 @@ Windows 上想亲眼确认「窗口真的在屏幕上、标题真的写着 AI �
 
 ## 本机验证记录
 
-**v0.20.0 / v0.20.1，真机跑通**（DSH desktop 0.2.1-rc.2 / Node 24 / 中文 Windows / Edge **155.0.4283.45**；
+**v0.20.0 ～ v0.21.0，真机跑通**（DSH desktop 0.2.1-rc.2 / Node 24 / 中文 Windows / Edge **155.0.4283.45** 与 **156.0.4314.50**；
 表里也保留 v0.19.x 时期的验证结论）：
 
 | 项目 | 实测结果 |
@@ -378,10 +402,11 @@ Windows 上想亲眼确认「窗口真的在屏幕上、标题真的写着 AI �
 | 多会话 | agent-1 与 agent-2 各持一张页面，切换后互不串台；agent-1 的第二次 `open` 仍停在自己的页面上，页面总数不变 |
 | 页面接手 | agent-2 结束后，agent-1 用 `adopt=<agent-2 的 targetId>` 接手：页面总数不变，agent-1 原来的页面被释放（仍开着、`agentBound: false`），角标改成 `负责人 主会话 #agent1`；agent-2 再调用时被告知去 `open` |
 | dispose | 浏览器进程退出，`status.running === false` |
-| 两轮全绿 | headless 32/32、visible 32/32 |
+| 两轮全绿 | headless 34/34、visible 34/34 |
 | 页面归属（v0.20.0） | 同一 agent 第二次 `open` 返回 `reuse: true`、`note: navigated the page this agent already owns (one page per agent)`，`status.pages` 数量与 `selected` 均不变；负责人仍在运行时 `adopt` 被拒（`still owned by an active agent`）；`markAgentDisposed` 后 `adopt` 成功，`adoptedFrom: 主会话 #agent2`、`released` 指向自己原来的页面，页面总数不变，角标变为 `负责人 主会话 #agent1` |
 | 真机首测（v0.20.0） | 首次 `open` 的 `owner: lead`、角标 `负责人 lead`；一次性子 agent 的页 `owner: 子 agent L1 #bda78a`，父页不受影响；子 agent 结束后 `[owner: …, finished]`；活着的负责人页 `adopt` 被拒、结束后按 id 接手成功，页面数 3→3，`released` 的旧页仍在但无 owner，角标变 `负责人 lead` |
 | v0.20.1 复测 | 系统提示词规则在 lead 与一次性子 agent 的 prompt 中都出现（子 agent 逐字复述，含 `adopt=<targetId>` 与「never operate another agent's page」）；`status` 每行打印 `(id: …)`，有「已结束」页时追加 `call browser_panel_open with adopt set to that page's (id: …)`，接手后该行消失；只按 `status` 里打印的 id 执行 `adopt` 即成功，全程未借助 devtools 端点 |
+| 截图模式（v0.21.0） | 纯白 fixture 页：`clean` 四角 `rgb(255,255,255)`、右下 460×90 区域最暗像素 luma **255**（没有角标与边框）；`marked` 同一页四角 `rgb(252,204,80)`、右下最暗 luma **79.6**（角标在）；截图返回后角标仍在屏幕上。headless 34/34、visible 34/34 |
 | 实况图 | `e2e/window-demo.png`（角标 + 标记标签页 + 表单已提交）、`e2e/window-marker.png`（标记卡） |
 | 真实站点 | 一个自建的多模型对话站（公网 HTTP，非本仓库 fixture）走了一遍完整会话操作：登录 → 新建对话 → 切换模型 → 输入消息 → Enter → 拿到回复。全程可见窗口，页面右下角的角标同步显示「正在执行脚本 / 正在截图 · #driver」 |
 | HTTPS 站点 | 一个使用自签 / 内部证书的 HTTPS 控制台：`isSecureContext: true`，无证书拦截页；读到登录卡片，`#loginUser` 真实键入并读回、Tab 被页面自己拦在登录框内（是站点行为，fixture 上 Tab 正常移动焦点）、点「登录」触发站点自己的校验「用户名和口令都要填」 |
@@ -457,8 +482,10 @@ Windows 上想亲眼确认「窗口真的在屏幕上、标题真的写着 AI �
 - **标记标签页被关掉就不再创建**（不跟用户抢标签页），窗口标题那层标识仍然在。
 - **headless 模式下身份层只剩页面里的角标**：`headless: true` 时没有窗口可看，`windowName` 和标记标签页
   都没有对象，这套设计是为「用户看着 AI 干活」准备的。
-- **角标会出现在 `browser_panel_screenshot` 的图里**（这是有意的：事后回看截图也能看出是 AI 在操作），
-  但它不会出现在 `browser_panel_snapshot` 的文字与大纲里。
+- **截图默认不含角标**（`screenshot: clean`）：它不会出现在 `browser_panel_snapshot` 的文字与大纲里，
+  也不会出现在 `browser_panel_screenshot` 的 PNG 里。想在图里留下「这是 AI 在操作」的证据，就把模式设成 `marked`。
+- **`clean` 截图会有一眨眼**：按快门那一瞬间角标与边框会被藏起来，随后立刻回来（约 0.1–0.3 秒）。
+  这是「截一张没有标识的图」本身要付的代价；`marked` 不藏，但图里就会带着它们。
 
 关于「没有浏览器」这条路，也有几条边界：
 

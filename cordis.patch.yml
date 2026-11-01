@@ -51,6 +51,14 @@
         # A first tab whose page explains what this window is. The user closing
         # it is respected; it is not re-opened behind their back.
         markerTab: true
+        # What browser_panel_screenshot puts into the PNG:
+        #   clean  — the page itself: the corner badge and the amber frame stay
+        #            visible in the window but are suspended for the instant of
+        #            the capture (default)
+        #   marked — the badge and frame are part of the image, so a screenshot
+        #            looked at later still proves the AI was driving
+        # An unknown value falls back to `clean`.
+        screenshot: clean
         # What to do when this machine has no Chromium-family browser at all:
         #   ask    — detect at load, then the first browser_panel_open puts a
         #            question in the DSH UI offering to download a Chrome for

@@ -18,6 +18,7 @@ import { createServer } from 'node:http'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { inflateSync } from 'node:zlib'
 import {
   BrowserWindowController,
   buildToolDefinitions,
@@ -59,6 +60,14 @@ const PAGES = {
 <body><p id="csp-note">strict csp body</p></body></html>`,
     csp: "default-src 'none'; script-src 'none'; style-src 'none'",
   },
+  // A page that is white edge to edge: any pixel that is not white in a capture
+  // of it came from the ownership layer rather than from the page.
+  '/clean': {
+    body: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Clean capture</title>
+<style>html,body{margin:0;height:100%;background:#ffffff}</style></head>
+<body><p id="clean-note" style="margin:0">plain page for capture checks</p></body></html>`,
+  },
 }
 
 const argv = process.argv.slice(2)
@@ -96,6 +105,88 @@ async function startFixture() {
 
 /** @param ms - how long to wait. @returns a promise. */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** PNG row filter type 4 (Paeth), spelled out because Node has no decoder. */
+function paeth(a, b, c) {
+  const p = a + b - c
+  const pa = Math.abs(p - a)
+  const pb = Math.abs(p - b)
+  const pc = Math.abs(p - c)
+  if (pa <= pb && pa <= pc) return a
+  return pb <= pc ? b : c
+}
+
+/**
+ * Decode an 8-bit non-interlaced PNG (colour types 2 and 6) enough to read pixels.
+ *
+ * The screenshot checks are about what the compositor actually painted, and the
+ * only witness for that is the PNG itself: reading the DOM back would say
+ * "hidden" even if the overlay were already baked into the image.
+ *
+ * @param bytes - the PNG file.
+ * @returns `{ width, height, at(x, y), darkestIn(x0, y0, x1, y1) }`.
+ */
+function decodePng(bytes) {
+  let offset = 8
+  let width = 0
+  let height = 0
+  let colorType = 0
+  const idat = []
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    const type = bytes.subarray(offset + 4, offset + 8).toString('latin1')
+    const chunk = bytes.subarray(offset + 8, offset + 8 + length)
+    if (type === 'IHDR') {
+      width = chunk.readUInt32BE(0)
+      height = chunk.readUInt32BE(4)
+      assert.equal(chunk[8], 8, 'expected an 8-bit PNG')
+      colorType = chunk[9]
+      assert.ok(colorType === 2 || colorType === 6, `unexpected PNG colour type ${colorType}`)
+    } else if (type === 'IDAT') {
+      idat.push(chunk)
+    } else if (type === 'IEND') {
+      break
+    }
+    offset += 8 + length + 4
+  }
+  const channels = colorType === 6 ? 4 : 3
+  const stride = width * channels
+  const raw = inflateSync(Buffer.concat(idat))
+  const pixels = Buffer.alloc(stride * height)
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[y * (stride + 1)]
+    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1))
+    const out = pixels.subarray(y * stride, (y + 1) * stride)
+    const prior = y === 0 ? Buffer.alloc(stride) : pixels.subarray((y - 1) * stride, y * stride)
+    for (let x = 0; x < stride; x += 1) {
+      const a = x >= channels ? out[x - channels] : 0
+      const b = prior[x]
+      const c = x >= channels ? prior[x - channels] : 0
+      let value = line[x]
+      if (filter === 1) value += a
+      else if (filter === 2) value += b
+      else if (filter === 3) value += Math.floor((a + b) / 2)
+      else if (filter === 4) value += paeth(a, b, c)
+      out[x] = value & 0xff
+    }
+  }
+  const at = (x, y) => {
+    const index = y * stride + x * channels
+    return { r: pixels[index], g: pixels[index + 1], b: pixels[index + 2] }
+  }
+  const darkestIn = (x0, y0, x1, y1) => {
+    let darkest = { x: x0, y: y0, r: 255, g: 255, b: 255, luma: 255 }
+    for (let y = y0; y <= y1; y += 1) {
+      for (let x = x0; x <= x1; x += 1) {
+        const pixel = at(x, y)
+        const luma = 0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b
+        if (luma < darkest.luma) darkest = { x, y, ...pixel, luma }
+      }
+    }
+    return darkest
+  }
+  return { width, height, at, darkestIn }
+}
 
 let fixture
 let controller
@@ -342,6 +433,54 @@ try {
     return value
   })
   console.log(`      wrote ${shotPath}`)
+
+  await step('a clean capture leaves the AI badge and amber frame out of the PNG', async () => {
+    await call('browser_panel_open', { url: `${fixture.origin}/clean` })
+    const cleanPath = path.join(shotDir, 'clean.png')
+    const value = await call('browser_panel_screenshot', { path: cleanPath })
+    const image = decodePng(readFileSync(cleanPath))
+    // The fixture is white edge to edge and the frame is 3px inset, so the four
+    // inside corners say whether it was captured.
+    const corners = [[1, 1], [image.width - 2, 1], [1, image.height - 2], [image.width - 2, image.height - 2]]
+    for (const [x, y] of corners) {
+      const pixel = image.at(x, y)
+      assert.ok(pixel.r > 240 && pixel.g > 240 && pixel.b > 240, `clean PNG has AI chrome at ${x},${y}: ${JSON.stringify(pixel)}`)
+    }
+    // The badge lives bottom-right; nothing that dark belongs to this page.
+    const darkest = image.darkestIn(image.width - 460, image.height - 90, image.width - 1, image.height - 1)
+    assert.ok(darkest.luma > 200, `clean PNG still contains the badge: ${JSON.stringify(darkest)}`)
+    // The layer is hidden only for the instant of the capture: it is back on
+    // screen by the time the tool returns.
+    const onScreen = await call('browser_panel_eval', {
+      script: 'const el = document.getElementById("dsh-ai-ownership"); return el === null ? "" : el.style.display',
+    })
+    assert.notEqual(onScreen.value, 'none', 'the badge must be back on screen after the capture')
+    console.log(`      wrote ${cleanPath}`)
+    return value
+  })
+
+  await step('screenshot: marked keeps the badge and frame in the PNG', async () => {
+    const markedProfile = mkdtempSync(path.join(tmpdir(), 'dsh-browser-panel-marked-'))
+    const marked = new BrowserWindowController({ profileDir: markedProfile, headless: true, screenshot: 'marked' })
+    try {
+      const markedTools = new Map(buildToolDefinitions({ get: () => undefined }, marked).map((definition) => [definition.name, definition]))
+      const agent = { agent: { id: 'agent-marked' } }
+      await markedTools.get('browser_panel_open').execute({ url: `${fixture.origin}/clean` }, agent)
+      const markedPath = path.join(shotDir, 'marked.png')
+      const value = await markedTools.get('browser_panel_screenshot').execute({ path: markedPath }, agent)
+      const image = decodePng(readFileSync(markedPath))
+      const corner = image.at(1, 1)
+      assert.ok(corner.r > 200 && corner.g > 140 && corner.b < 160, `marked PNG lost the amber frame: ${JSON.stringify(corner)}`)
+      const darkest = image.darkestIn(image.width - 460, image.height - 90, image.width - 1, image.height - 1)
+      assert.ok(darkest.luma < 120, `marked PNG is missing the badge: ${JSON.stringify(darkest)}`)
+      console.log(`      wrote ${markedPath}`)
+      return value
+    } finally {
+      marked.dispose()
+      await sleep(400)
+      rmSync(markedProfile, { recursive: true, force: true })
+    }
+  })
 
   await step('status now describes a running window with a bound tab', async () => {
     const value = await call('browser_panel_status')
