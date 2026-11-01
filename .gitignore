@@ -1,0 +1,19 @@
+# Local runtime artifacts (screenshots written by the plugin itself)
+.dsh-browser-panel/
+
+# Local version backups
+.backup/
+
+# Screenshots of real personal / internal sites — deliberately not published
+e2e/fieldmate-*.png
+e2e/live-site-session.png
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

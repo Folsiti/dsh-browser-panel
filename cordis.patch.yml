@@ -1,0 +1,64 @@
+# dsh-browser-panel bundle patch: insert the host half as one cordis row.
+#
+# host.js spawns a Chromium-family browser (Edge, Chrome, Brave, ...) with a
+# remote-debugging port, keeps a window on screen, and registers the
+# model-facing browser_panel_* tools that drive it over CDP. There is no client
+# half any more: the plugin no longer touches the right-Sidebar Browser tab.
+- insert:
+    - id: sidebar-browser
+      name: '@local/dsh-sidebar-browser'
+      config:
+        # Budget for one DevTools command, and for waiting on a page load.
+        actionTimeoutMs: 20000
+        # Cap on the page text browser_panel_snapshot returns.
+        maxSnapshotChars: 12000
+        # Empty means "detect one": Edge, then Chrome, then Brave, then the
+        # usual Linux paths. Set an absolute path to pin a specific build.
+        browserPath: ''
+        # Empty means ~/.dsh/browser-panel/browser-profile. This profile is what
+        # makes logins survive a restart, and it is deliberately separate from
+        # the browser you use yourself.
+        profileDir: ''
+        # The window is the feature. Set true only for an unattended run.
+        headless: false
+        windowWidth: 1280
+        windowHeight: 800
+        # -1 lets the OS place the window.
+        windowX: -1
+        windowY: -1
+        # 0 lets the browser pick a port and record it in the profile's
+        # DevToolsActivePort file — which is also the only way a browser left
+        # over from an earlier session can be found and reused. Set a fixed port
+        # only to attach a second CDP client by hand.
+        debugPort: 0
+        startUrl: 'about:blank'
+        # Guard on what browser_panel_open may load: comma-separated host
+        # suffixes, e.g. 'example.com, docs.example.com'. Empty allows any
+        # http(s) host. It constrains the agent's entry point only.
+        allowOrigins: ''
+        # The name written into the browser profile before its first launch, so
+        # the OS window title, taskbar tooltip and alt-tab read
+        # "… - AI 浏览器 - Microsoft Edge" instead of looking like the user's own
+        # browser. A name the user chose themselves is never overwritten.
+        windowName: 'AI 浏览器'
+        # The in-page ownership layer:
+        #   always    — a corner badge is always visible on every page
+        #   operating — the badge appears only while a tool call is running
+        #   off       — no badge, and no marker tab
+        # An unknown value falls back to `always`, so a typo cannot hide the
+        # fact that this window is the AI's.
+        ownership: always
+        # A first tab whose page explains what this window is. The user closing
+        # it is respected; it is not re-opened behind their back.
+        markerTab: true
+        # What to do when this machine has no Chromium-family browser at all:
+        #   ask    — detect at load, then the first browser_panel_open puts a
+        #            question in the DSH UI offering to download a Chrome for
+        #            Testing build (~196 MB, into the plugin's own directory). If
+        #            the user declines, the plugin stays switched off and is not
+        #            asked again; installing any browser later lifts it by itself.
+        #   never  — never ask, never download; the tools just report why they
+        #            cannot work.
+        #   auto   — download without asking (unattended setups).
+        # An unknown value falls back to `ask`, never to downloading silently.
+        provision: ask
